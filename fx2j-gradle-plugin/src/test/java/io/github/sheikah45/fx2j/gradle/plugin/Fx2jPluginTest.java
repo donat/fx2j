@@ -277,6 +277,152 @@ public class Fx2jPluginTest {
         assertTrue(Files.exists(projectPath.resolve("src/fx2j/java/fx2j/extended/builder/Fx2jBuilderFinder.java")));
     }
 
+    @Test
+    public void testFx2jJarOnRuntimeClasspathWithoutRealizingTheJarTask() throws IOException {
+        Files.writeString(buildGradlePath, """
+                                            plugins {
+                                                id 'java'
+                                                id 'io.github.sheikah45.fx2j'
+                                            }
+
+                                            tasks.register("printRuntimeClasspath") {
+                                                def runtimeClasspath = configurations.runtimeClasspath
+                                                dependsOn runtimeClasspath
+                                                doLast {
+                                                    runtimeClasspath.files.each { println "RUNTIME_ENTRY " + it.name }
+                                                }
+                                            }
+                                           """, StandardOpenOption.TRUNCATE_EXISTING);
+
+        BuildResult result = GradleRunner.create()
+                                         .withProjectDir(projectPath.toFile())
+                                         .withArguments("printRuntimeClasspath")
+                                         .withPluginClasspath()
+                                         .forwardOutput()
+                                         .build();
+
+        BuildTask fx2jJar = result.task(":fx2jJar");
+        assertNotNull(fx2jJar);
+        assertEquals(TaskOutcome.SUCCESS, fx2jJar.getOutcome());
+        assertTrue(result.getOutput().contains("RUNTIME_ENTRY " + projectPath.getFileName() + "-fx2j.jar"));
+    }
+
+    @Test
+    public void testTasksRealizedAfterTheRuntimeClasspathIsResolved() throws IOException {
+        Files.writeString(buildGradlePath, """
+                                            plugins {
+                                                id 'java'
+                                                id 'io.github.sheikah45.fx2j'
+                                            }
+
+                                            afterEvaluate {
+                                                configurations.runtimeClasspath.resolve()
+                                                tasks.names.each { tasks.findByName(it) }
+                                            }
+                                           """, StandardOpenOption.TRUNCATE_EXISTING);
+
+        BuildResult result = GradleRunner.create()
+                                         .withProjectDir(projectPath.toFile())
+                                         .withArguments("help")
+                                         .withPluginClasspath()
+                                         .forwardOutput()
+                                         .build();
+
+        BuildTask help = result.task(":help");
+        assertNotNull(help);
+        assertEquals(TaskOutcome.SUCCESS, help.getOutcome());
+    }
+
+    @Test
+    public void testFx2jJarAddedToTheConfiguredBaseSourceSet() throws IOException {
+        Files.writeString(buildGradlePath, """
+                                            plugins {
+                                                id 'java'
+                                                id 'io.github.sheikah45.fx2j'
+                                            }
+
+                                            sourceSets {
+                                                other
+                                            }
+
+                                            fx2j {
+                                                baseSourceSetName = "other"
+                                            }
+
+                                            tasks.register("printRuntimeOnly") {
+                                                dependsOn tasks.named("fx2jJar")
+                                                def mainRuntimeOnly = configurations.runtimeOnly
+                                                def otherRuntimeOnly = configurations.otherRuntimeOnly
+                                                doLast {
+                                                    println "MAIN_RUNTIME_ONLY " + mainRuntimeOnly.dependencies.size()
+                                                    println "OTHER_RUNTIME_ONLY " + otherRuntimeOnly.dependencies.size()
+                                                }
+                                            }
+                                           """, StandardOpenOption.TRUNCATE_EXISTING);
+
+        BuildResult result = GradleRunner.create()
+                                         .withProjectDir(projectPath.toFile())
+                                         .withArguments("printRuntimeOnly")
+                                         .withPluginClasspath()
+                                         .forwardOutput()
+                                         .build();
+
+        assertTrue(result.getOutput().contains("MAIN_RUNTIME_ONLY 0"));
+        assertTrue(result.getOutput().contains("OTHER_RUNTIME_ONLY 1"));
+    }
+
+    @Test
+    public void testPluginWithoutTheJavaPluginRegistersNothing() throws IOException {
+        Files.writeString(buildGradlePath, """
+                                            plugins {
+                                                id 'io.github.sheikah45.fx2j'
+                                            }
+
+                                            tasks.register("probe") {
+                                                def hasFx2jJar = tasks.names.contains("fx2jJar")
+                                                def hasCompileFx2j = tasks.names.contains("compileFx2j")
+                                                doLast {
+                                                    println "HAS_FX2J_JAR " + hasFx2jJar
+                                                    println "HAS_COMPILE_FX2J " + hasCompileFx2j
+                                                }
+                                            }
+                                           """, StandardOpenOption.TRUNCATE_EXISTING);
+
+        BuildResult result = GradleRunner.create()
+                                         .withProjectDir(projectPath.toFile())
+                                         .withArguments("probe")
+                                         .withPluginClasspath()
+                                         .forwardOutput()
+                                         .build();
+
+        BuildTask probe = result.task(":probe");
+        assertNotNull(probe);
+        assertEquals(TaskOutcome.SUCCESS, probe.getOutcome());
+        assertTrue(result.getOutput().contains("HAS_FX2J_JAR false"));
+        assertTrue(result.getOutput().contains("HAS_COMPILE_FX2J false"));
+    }
+
+    @Test
+    public void testPluginAppliedBeforeTheJavaPlugin() throws IOException {
+        Files.writeString(buildGradlePath, """
+                                            plugins {
+                                                id 'io.github.sheikah45.fx2j'
+                                                id 'java'
+                                            }
+                                           """, StandardOpenOption.TRUNCATE_EXISTING);
+
+        BuildResult result = GradleRunner.create()
+                                         .withProjectDir(projectPath.toFile())
+                                         .withArguments("fx2jJar")
+                                         .withPluginClasspath()
+                                         .forwardOutput()
+                                         .build();
+
+        BuildTask fx2jJar = result.task(":fx2jJar");
+        assertNotNull(fx2jJar);
+        assertEquals(TaskOutcome.SUCCESS, fx2jJar.getOutcome());
+    }
+
     @AfterEach
     public void teardown() throws IOException {
         try (Stream<Path> files = Files.walk(projectPath)) {

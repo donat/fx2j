@@ -27,7 +27,6 @@ public class Fx2jPlugin implements Plugin<Project> {
     @Override
     public void apply(Project project) {
 
-        ProjectLayout layout = project.getLayout();
         Fx2jPluginExtension extension = project.getExtensions().create(FX2J, Fx2jPluginExtension.class);
         extension.getBaseSourceSetName().convention("main");
         extension.getBasePackage().convention("fx2j.builder");
@@ -35,7 +34,12 @@ public class Fx2jPlugin implements Plugin<Project> {
         extension.getModularizeIfPossible().convention(true);
         extension.getExcludes().convention(Set.of());
         extension.getIncludes().convention(Set.of());
+        project.getPluginManager().withPlugin("java", javaPlugin -> configureJavaProject(project, extension));
+    }
 
+    private static void configureJavaProject(Project project, Fx2jPluginExtension extension) {
+
+        ProjectLayout layout = project.getLayout();
         JavaPluginExtension javaPluginExtension = project.getExtensions().getByType(JavaPluginExtension.class);
         SourceSetContainer sourceSets = javaPluginExtension.getSourceSets();
         ConfigurationContainer configurations = project.getConfigurations();
@@ -93,12 +97,14 @@ public class Fx2jPlugin implements Plugin<Project> {
             task.from(fx2jSourceSet.map(SourceSet::getOutput));
             task.manifest(manifest -> manifest.attributes(Map.of("Automatic-Module-Name", extension.getBasePackage())));
             task.getArchiveClassifier().set(FX2J);
-
-            SourceSet baseSourceSet = baseSourceSetProvider.get();
-            project.getDependencies()
-                   .add(baseSourceSet.getRuntimeOnlyConfigurationName(),
-                        project.getLayout().files(task.getArchiveFile()));
         });
+
+        // Waiting for the project to be evaluated keeps baseSourceSetName configurable from the build script
+        project.afterEvaluate(evaluated -> evaluated.getDependencies()
+                                                    .add(baseSourceSetProvider.get()
+                                                                              .getRuntimeOnlyConfigurationName(),
+                                                         layout.files(fx2jJarTask.flatMap(
+                                                                 Jar::getArchiveFile))));
 
         TaskProvider<Delete> cleanFx2jTask = tasks.register("cleanFx2j", Delete.class, task -> {
             task.setGroup(FX2J);
